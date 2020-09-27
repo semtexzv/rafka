@@ -1,0 +1,30 @@
+[workspace]
+members = [".", "codegen"]
+
+[package]
+name = "rafka"
+version = "0.1.0"
+authors = ["Michal Hornicky <mhornick@redhat.com>"]
+edition = "2018"
+
+[lib]
+crate-type = ["staticlib", "cdylib"]
+
+[features]
+default = ["tls"]
+tls = ["tokio-rustls"]
+
+[dependencies]
+futures = "*"
+tokio = { version = "0.2", features = ["full"] }
+tokio-util = { version = "*", features = ["codec"] }
+tokio-rustls = { version ="0.14.1", optional = true }
+tokio-tower = "*"
+
+tower = "*"
+
+byteorder = "*"
+bytes = "*"
+anyhow = "*"
+
+rafka_codegen = { path = "./codegen" }
