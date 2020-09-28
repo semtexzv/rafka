@@ -1,28 +1,26 @@
-use crate::proto::{Wired, WireRead, WireWrite, MinVer, RecordBatch, ApiRequest, ApiKey};
+use crate::proto::{Wired, WireRead, WireWrite, RecordBatch, ApiRequest, ApiKey, TopicMap};
 
-impl ApiRequest for ProduceRequest {
+// Does not use flexible encoding
+impl ApiRequest for Request {
     const API_KEY: ApiKey = ApiKey::Produce;
-    type Response = ProduceResponseV0;
+    const FLEXIBLE_VER: usize = 99;
+
+    type Response = Response;
 }
 
 #[derive(Wired)]
-pub struct ProduceRecordDataData {
+pub struct ProducePart {
     pub(crate) partition: i32,
     pub(crate) record_set: RecordBatch,
 }
 
 #[derive(Wired)]
-pub struct ProduceRecordData {
-    pub(crate) topic: String,
-    pub(crate) data: Vec<ProduceRecordDataData>,
-}
-
-#[derive(Wired)]
-pub struct ProduceRequest {
-    pub(crate) transactional_id: MinVer<Option<String>, 3>,
+pub struct Request {
+    #[wired(since = 3)]
+    pub(crate) transactional_id: Option<Option<String>>,
     pub(crate) acks: i16,
     pub(crate) timeout: i32,
-    pub(crate) topic_data: Vec<ProduceRecordData>,
+    pub(crate) topic_data: TopicMap<ProducePart>,
 }
 
 #[derive(Wired)]
@@ -32,24 +30,23 @@ pub struct ProduceResponseBatchErrorItem {
 }
 
 #[derive(Wired)]
-pub struct ProduceResponsePartitionItem {
+pub struct ProduceResponsePartition {
     partition: i32,
     error_code: i16,
     base_offset: i64,
-    log_append_time: MinVer<i64, 2>,
-    log_start_offset: MinVer<i64, 5>,
-    record_errors: MinVer<Vec<ProduceResponseBatchErrorItem>, 6>,
-    error_message: MinVer<Option<String>, 6>,
+    #[wired(since = 2)]
+    log_append_time: Option<i64>,
+    #[wired(since = 5)]
+    log_start_offset: Option<i64>,
+    #[wired(since = 8)]
+    record_errors: Option<Vec<ProduceResponseBatchErrorItem>>,
+    #[wired(since = 8)]
+    error_message: Option<Option<String>>,
 }
 
 #[derive(Wired)]
-pub struct ProduceResponseItem {
-    topic: String,
-    partition_responses: Vec<ProduceResponsePartitionItem>,
-}
-
-#[derive(Wired)]
-pub struct ProduceResponseV0 {
-    responses: Vec<ProduceResponseItem>,
-    throttle_ms: MinVer<i32, 1>,
+pub struct Response {
+    responses: TopicMap<ProduceResponsePartition>,
+    #[wired(since = 1)]
+    throttle_ms: Option<i32>,
 }

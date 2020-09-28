@@ -1,38 +1,42 @@
-use crate::proto::{Wired, WireRead, WireWrite, MinVer, IsolationLevel, TopicMap, RecordBatch, ApiKey, ApiRequest};
+use crate::proto::{Wired, WireRead, WireWrite, IsolationLevel, TopicMap, RecordBatch, ApiKey, ApiRequest};
 
+// Fetch does not use compact encoding
+impl ApiRequest for Request {
+    const API_KEY: ApiKey = ApiKey::Fetch;
+    const FLEXIBLE_VER: usize = 99;
+
+    type Response = Response;
+}
 
 #[derive(Wired)]
 pub struct FetchPartitions {
     partition: i32,
-    current_leader_epoch: MinVer<i32, 9>,
+    #[wired(since = 9)]
+    current_leader_epoch: Option<i32>,
     offset: i64,
-    log_start_offset: MinVer<i64, 5>,
+    #[wired(since = 5)]
+    log_start_offset: Option<i64>,
     max_bytes: i32,
 }
 
 #[derive(Wired)]
-pub struct ForgottenTopics {
-    topic: String,
-    partitions: Vec<i32>,
-}
-
-impl ApiRequest for FetchRequest {
-    const API_KEY: ApiKey = ApiKey::Fetch;
-    type Response = FetchResponse;
-}
-
-#[derive(Wired)]
-pub struct FetchRequest {
+pub struct Request {
     replica_id: i32,
-    max_wait: i32,
+    max_wait_ms: i32,
     min_bytes: i32,
-    max_bytes: MinVer<i32, 3>,
-    isolation: MinVer<IsolationLevel, 4>,
-    session_id: MinVer<i32, 7>,
-    session_epoch: MinVer<i32, 7>,
+    #[wired(since = 3)]
+    max_bytes: Option<i32>,
+    #[wired(since = 4)]
+    isolation: Option<IsolationLevel>,
+    #[wired(since = 7)]
+    session_id: Option<i32>,
+    #[wired(since = 7)]
+    session_epoch: Option<i32>,
     topics: TopicMap<FetchPartitions>,
-    forgotten_topics_data: MinVer<ForgottenTopics, 7>,
-    rack_id: MinVer<String, 11>,
+    #[wired(since = 7)]
+    forgotten_topics_data: Option<TopicMap<i32>>,
+    #[wired(since = 11)]
+    rack_id: Option<String>,
 }
 
 #[derive(Wired)]
@@ -46,23 +50,24 @@ pub struct FetchResponsePart {
     partition: i32,
     error_code: i16,
     hwm: i64,
-    last_stable_offset: MinVer<i64, 4>,
-    log_start_offset: MinVer<i64, 5>,
-    aborted_txs: MinVer<Vec<FetchResponseAbortedTx>, 4>,
-    preferred_read_replic: MinVer<i32, 11>,
+    #[wired(since = 4)]
+    last_stable_offset: Option<i64>,
+    #[wired(since = 5)]
+    log_start_offset: Option<i64>,
+    #[wired(since = 4)]
+    aborted_transactions: Option<Vec<FetchResponseAbortedTx>>,
+    #[wired(since = 11)]
+    preferred_read_replica: Option<i32>,
     record_set: RecordBatch,
 }
 
 #[derive(Wired)]
-pub struct FetchResponseTopic {
-    topic: String,
-    partitions: Vec<FetchResponsePart>,
-}
-
-#[derive(Wired)]
-pub struct FetchResponse {
-    throttle_time_ms: MinVer<i32, 1>,
-    error_code: MinVer<i16, 7>,
-    session_id: MinVer<i32, 7>,
-    responses: Vec<FetchResponseTopic>,
+pub struct Response {
+    #[wired(since = 1)]
+    throttle_time_ms: Option<i32>,
+    #[wired(since = 7)]
+    error_code: Option<i16>,
+    #[wired(since = 7)]
+    session_id: Option<i32>,
+    responses: TopicMap<FetchResponsePart>,
 }

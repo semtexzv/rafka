@@ -2,7 +2,7 @@
 #![allow(unused_variables, unused_imports, dead_code)]
 
 #[macro_use]
-extern crate wire_gen;
+extern crate rafka_codegen;
 
 use tower::Service;
 

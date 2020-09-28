@@ -5,7 +5,7 @@ use crate::transport;
 use transport::CallReq;
 use tokio::net::{ToSocketAddrs, TcpStream};
 use std::future::Future;
-use crate::proto::{MinVer, TopicMap, TopicItem, ApiKey, IsolationLevel};
+use crate::proto::{ TopicMap, TopicItem, ApiKey, IsolationLevel};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use futures::future::poll_fn;
@@ -24,8 +24,12 @@ impl Client {
         let io = TcpStream::connect(addr).await?;
         let mut client = transport::new(io).await;
 
-        let request = crate::proto::api_versions::Request {};
-        let req = CallReq::new(0, request);
+        let request = crate::proto::api_versions::Request {
+            client_software_name: Some("rafka".to_string()),
+            client_software_version: Some("0.0.0".to_string()),
+            tags: None,
+        };
+        let req = CallReq::new(2, request);
 
         let ready = ServiceExt::<CallReq<crate::proto::api_versions::Request>>::ready_and(&mut client);
         let versions = ready.await?.call(req).await?;
@@ -48,14 +52,4 @@ impl Client {
         let (s_min, s_max) = self.api_versions.get(&key).cloned().unwrap();
         (s_min.max(c_max), s_max.min(c_max))
     }
-
-}
-
-#[tokio::test]
-async fn test_list_offsets() {
-    let client = Client::connect("localhost:9092").await.unwrap();
-    let offsets = client.list_offsets(vec![("test".to_string(), vec![0usize, 1])]).await.unwrap();
-
-    assert_eq!(offsets.res.items[0].topic, "test");
-    assert_eq!(offsets.res.items[0].value[0].partition, 0);
 }

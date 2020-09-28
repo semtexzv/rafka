@@ -1,4 +1,4 @@
-use crate::proto::{Wired, WireRead, WireWrite, MinVer, TopicMap, IsolationLevel, ApiRequest, ApiKey, TopicItem};
+use crate::proto::{Wired, WireRead, WireWrite, TopicMap, IsolationLevel, ApiRequest, ApiKey, TopicItem};
 use crate::client::Client;
 use crate::transport::CallReq;
 
@@ -7,15 +7,19 @@ use tower::{ServiceExt, Service};
 use std::ops::DerefMut;
 
 
+// Does not use flexible encoding
 impl ApiRequest for ListOffsetsRequest {
     const API_KEY: ApiKey = ApiKey::ListOffsets;
+    const FLEXIBLE_VER: usize = 99;
+
     type Response = Response;
 }
 
 #[derive(Debug, Clone, Wired)]
 pub struct ListOffsetsParts {
     pub(crate) partition: i32,
-    pub(crate) current_leader_epoch: MinVer<i32, 4>,
+    #[wired(since = 4)]
+    pub(crate) current_leader_epoch: Option<i32>,
     pub(crate) timestamp: i64,
     // Removed in ver1
     //max_num_offsets: i32,
@@ -24,7 +28,8 @@ pub struct ListOffsetsParts {
 #[derive(Debug, Clone, Wired)]
 pub struct ListOffsetsRequest {
     pub(crate) replica_id: i32,
-    pub(crate) isolation_level: MinVer<IsolationLevel, 2>,
+    #[wired(since = 2)]
+    pub(crate) isolation_level: Option<IsolationLevel>,
     pub(crate) topics: TopicMap<ListOffsetsParts>,
 }
 
@@ -32,14 +37,17 @@ pub struct ListOffsetsRequest {
 pub struct ListOffsetsResponseParts {
     pub partition: i32,
     pub error_code: i16,
-    pub timestamp: MinVer<i64, 1>,
+    #[wired(since = 1)]
+    pub timestamp: Option<i64>,
     pub offset: i64,
-    pub leader_epoch: MinVer<i32, 4>,
+    #[wired(since = 4)]
+    pub leader_epoch: Option<i32>,
 }
 
 #[derive(Debug, Clone, Wired)]
 pub struct Response {
-    pub throttle_time_ms: MinVer<i32, 2>,
+    #[wired(since = 2)]
+    pub throttle_time_ms: Option<i32>,
     pub res: TopicMap<ListOffsetsResponseParts>,
 }
 
@@ -78,4 +86,13 @@ impl Client {
             Ok(res)
         }
     }
+}
+
+#[tokio::test]
+async fn test_list_offsets() {
+    let client = Client::connect("localhost:9092").await.unwrap();
+    let offsets = client.list_offsets(vec![("test".to_string(), vec![0usize, 1])]).await.unwrap();
+
+    assert_eq!(offsets.res.items[0].topic, "test");
+    assert_eq!(offsets.res.items[0].value[0].partition, 0);
 }

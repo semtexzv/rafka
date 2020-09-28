@@ -2,7 +2,7 @@ use std::fmt::Display;
 use bytes::{BufMut, BytesMut, Buf, Bytes};
 use std::ops::{Deref, DerefMut};
 use byteorder::{ByteOrder, BigEndian};
-use crate::proto::vint;
+use crate::proto::{vint, uvint};
 
 #[derive(Debug)]
 pub struct Error {}
@@ -28,6 +28,21 @@ pub struct WireRead<'a> {
 pub trait Wired: Sized {
     fn to_wire(&self, wire: &mut WireWrite);
     fn from_wire(wire: &mut WireRead) -> Result<Self, Error>;
+
+    fn to_wire_compact(&self, wire: &mut WireWrite) {
+        self.to_wire(wire);
+    }
+    fn from_wire_compact(wire: &mut WireRead) -> Result<Self, Error> {
+        Self::from_wire(wire)
+    }
+}
+
+impl Wired for () {
+    fn to_wire(&self, wire: &mut WireWrite) {}
+
+    fn from_wire(wire: &mut WireRead) -> Result<Self, Error> {
+        Ok(())
+    }
 }
 
 impl<T: Wired> Wired for Vec<T> {
@@ -46,6 +61,23 @@ impl<T: Wired> Wired for Vec<T> {
         }
         Ok(res)
     }
+
+    fn to_wire_compact(&self, wire: &mut WireWrite) {
+        uvint::from(self.len() + 1).to_wire(wire);
+        for item in self {
+            item.to_wire_compact(wire);
+        }
+    }
+
+    fn from_wire_compact(wire: &mut WireRead) -> Result<Self, Error> {
+        let len: usize = uvint::from_wire(wire)?.into();
+        let len = len - 1;
+        let mut res = Vec::with_capacity(len as _);
+        for item in 0..len {
+            res.push(T::from_wire_compact(wire)?);
+        }
+        Ok(res)
+    }
 }
 
 impl Wired for String {
@@ -57,6 +89,17 @@ impl Wired for String {
     fn from_wire(wire: &mut WireRead) -> Result<Self, Error> {
         let len = wire.buffer.get_i16();
         let data = wire.buffer.split_to(len as _);
+        Ok(String::from_utf8(data.bytes().to_vec()).unwrap())
+    }
+
+    fn to_wire_compact(&self, wire: &mut WireWrite) {
+        uvint::from(self.len() + 1).to_wire(wire);
+        wire.buffer.put(self.as_bytes());
+    }
+
+    fn from_wire_compact(wire: &mut WireRead) -> Result<Self, Error> {
+        let len: usize = uvint::from_wire(wire)?.into();
+        let data = wire.buffer.split_to(len - 1usize);
         Ok(String::from_utf8(data.bytes().to_vec()).unwrap())
     }
 }
@@ -81,19 +124,54 @@ impl Wired for Option<String> {
         let data = wire.buffer.split_to(len as _);
         Ok(Some(String::from_utf8(data.to_vec()).unwrap()))
     }
+
+    fn to_wire_compact(&self, wire: &mut WireWrite) {
+        match self {
+            None => {
+                (uvint::from(0)).to_wire(wire);
+            }
+            Some(v) => {
+                v.to_wire_compact(wire);
+            }
+        }
+    }
+
+    fn from_wire_compact(wire: &mut WireRead) -> Result<Self, Error> {
+        let len: usize = uvint::from_wire(wire)?.into();
+        if len == 0 {
+            return Ok(None);
+        }
+        let data = wire.buffer.split_to(len - 1);
+        Ok(Some(String::from_utf8(data.bytes().to_vec()).unwrap()))
+    }
 }
 
 impl Wired for Bytes {
     fn to_wire(&self, wire: &mut WireWrite) {
-        (vint(self.len() as _)).to_wire(wire);
+        (self.len() as i32).to_wire(wire);
         wire.buffer.put(self.bytes());
     }
 
     fn from_wire(wire: &mut WireRead) -> Result<Self, Error> {
-        unimplemented!()
+        let len = wire.buffer.get_i32();
+        let data = wire.buffer.split_to(len as _);
+        Ok(data)
+    }
+
+    fn to_wire_compact(&self, wire: &mut WireWrite) {
+        uvint::from(self.len() + 1).to_wire(wire);
+        wire.buffer.put(self.bytes());
+    }
+
+    fn from_wire_compact(wire: &mut WireRead) -> Result<Self, Error> {
+        let len: usize = uvint::from_wire(wire)?.into();
+
+        let data = wire.buffer.split_to(len - 1usize);
+        Ok(data)
     }
 }
 
+// TODO: Option<bytes> for NULLABLE_BYTES
 impl Wired for bool {
     #[inline(always)]
     fn to_wire(&self, wire: &mut WireWrite) {

@@ -4,13 +4,27 @@ pub(crate) mod produce;
 pub(crate) mod list_offsets;
 pub(crate) mod api_versions;
 pub(crate) mod metadata;
+pub(crate) mod leader_isr;
+pub(crate) mod offset_commit;
+pub(crate) mod offset_fetch;
+pub(crate) mod find_coordinator;
+pub(crate) mod join_group;
+pub(crate) mod heartbeat;
+pub(crate) mod leave_group;
+pub(crate) mod sync_group;
+pub(crate) mod describe_groups;
+pub(crate) mod list_groups;
+pub(crate) mod create_partitions;
+pub(crate) mod offset_delete;
 
-use bytes::{BytesMut, Buf, Bytes};
+use bytes::{BytesMut, Buf, Bytes, BufMut};
 
 pub use format::*;
+use std::ops::Shr;
 
 pub trait ApiRequest: Wired {
     const API_KEY: ApiKey;
+    const FLEXIBLE_VER: usize;
     type Response: Wired;
 }
 
@@ -21,7 +35,7 @@ pub enum ApiKey {
     Fetch = 1,
     ListOffsets = 2,
     Metadata = 3,
-    LeaderAndlsr = 4,
+    LeaderAndIsr = 4,
     StopReplica = 5,
     UpdateMetadata = 6,
     ControlledShutdown = 7,
@@ -90,7 +104,7 @@ impl Wired for ApiKey {
 #[repr(i8)]
 pub enum IsolationLevel {
     ReadUncommited = 0,
-    ReadCommited,
+    ReadCommited = 1,
 }
 
 impl Wired for IsolationLevel {
@@ -104,51 +118,9 @@ impl Wired for IsolationLevel {
     }
 }
 
-#[derive(Default, Clone, Wired)]
-pub struct RequestHeader {
-    pub(crate) api_key: ApiKey,
-    pub(crate) api_version: i16,
-    pub(crate) correlation_id: i32,
-    pub(crate) client_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Wired)]
-pub struct ResponseHeader {
-    pub(crate) correlation_id: i32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MinVer<T: Wired, const VER: usize>(pub Option<T>);
-
-impl<T: Wired, const VER: usize> Wired for MinVer<T, VER> {
-    fn to_wire(&self, wire: &mut WireWrite) {
-        if wire.version >= VER {
-            self.0.as_ref().expect("Need to provide value for this version").to_wire(wire);
-        }
-    }
-
-    fn from_wire(wire: &mut WireRead) -> Result<Self, Error> {
-        if wire.version >= VER {
-            return Ok(Self(Some(T::from_wire(wire)?)));
-        }
-        Ok(Self(None))
-    }
-}
-
-impl<T: Wired, const VER: usize> From<Option<T>> for MinVer<T, VER> {
-    fn from(v: Option<T>) -> Self {
-        Self(v)
-    }
-}
-
-impl<T: Wired, const VER: usize> From<T> for MinVer<T, VER> {
-    fn from(v: T) -> Self {
-        Self(Some(v))
-    }
-}
 
 #[allow(non_camel_case_types)]
-pub struct vint(i32);
+pub struct vint(isize);
 
 impl Wired for vint {
     fn to_wire(&self, wire: &mut WireWrite) {
@@ -157,6 +129,74 @@ impl Wired for vint {
 
     fn from_wire(wire: &mut WireRead) -> Result<Self, Error> {
         unimplemented!()
+    }
+}
+
+//https://cwiki.apache.org/confluence/display/KAFKA/KIP-482%3A+The+Kafka+Protocol+should+Support+Optional+Tagged+Fields
+#[allow(non_camel_case_types)]
+pub struct uvint(usize);
+
+impl Into<usize> for uvint {
+    fn into(self) -> usize {
+        self.0
+    }
+}
+
+impl From<usize> for uvint {
+    fn from(v: usize) -> Self {
+        Self(v)
+    }
+}
+
+impl Wired for uvint {
+    fn to_wire(&self, wire: &mut WireWrite) {
+        let mut val = self.0;
+        loop {
+            let mut c = (val & 0b01111111) as u8;
+            val = val >> 7;
+            c |= ((val > 0) as u8 & 0b1) << 7;
+            println!("{:#b}", c);
+            wire.buffer.put_u8(c);
+            if val == 0 { break; }
+        }
+    }
+
+    fn from_wire(wire: &mut WireRead) -> Result<Self, Error> {
+        let mut res: usize = 0;
+        let mut i = 0;
+        loop {
+            let b = wire.buffer.get_u8();
+            res |= ((b & 0b01111111) as usize) << (i * 7);
+            i += 1;
+            if (b >> 7) == 0 { break; }
+        }
+        return Ok(Self(res));
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TagBuffer {}
+
+impl Default for TagBuffer {
+    fn default() -> Self {
+        Self {}
+    }
+}
+
+impl Wired for TagBuffer {
+    fn to_wire(&self, wire: &mut WireWrite) {
+        uvint::from(0).to_wire(wire)
+    }
+
+    fn from_wire(wire: &mut WireRead) -> Result<Self, Error> {
+        let len = uvint::from_wire(wire)?.0 as usize;
+        let res = TagBuffer {};
+        for i in 0..len {
+            let elem_tag = uvint::from_wire(wire)?;
+            let elem_len = uvint::from_wire(wire)?;
+        }
+
+        Ok(res)
     }
 }
 
@@ -200,7 +240,11 @@ pub struct TopicItem<T: Wired> {
     pub value: Vec<T>,
 }
 
+// TODO: Add const param ` const TAG_SINCE: usize `
 #[derive(Debug, Clone, Wired)]
 pub struct TopicMap<T: Wired> {
-    pub items: Vec<TopicItem<T>>
+    pub items: Vec<TopicItem<T>>,
+    //pub _tag_buffer: MinVer<(), TAG_SINCE>,
 }
+
+

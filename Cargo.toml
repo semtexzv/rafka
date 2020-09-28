@@ -5,6 +5,9 @@ members = [".", "codegen"]
 name = "rafka"
 version = "0.1.0"
 authors = ["Michal Hornicky <mhornick@redhat.com>"]
+description = "Pure-rust kafka client"
+repository = "https://github.com/semtexzv/rafka"
+license = "MIT"
 edition = "2018"
 
 [lib]
@@ -15,16 +18,16 @@ default = ["tls"]
 tls = ["tokio-rustls"]
 
 [dependencies]
-futures = "*"
+futures = "0.3"
 tokio = { version = "0.2", features = ["full"] }
-tokio-util = { version = "*", features = ["codec"] }
+tokio-util = { version = "0.3.1", features = ["codec"] }
 tokio-rustls = { version ="0.14.1", optional = true }
-tokio-tower = "*"
+tokio-tower = "0.4"
 
-tower = "*"
+tower = "0.3"
 
-byteorder = "*"
-bytes = "*"
-anyhow = "*"
+byteorder = "1"
+bytes = "0.5"
+anyhow = "1"
 
-rafka_codegen = { path = "./codegen" }
+rafka_codegen = { version = "0.0.0",  path = "./codegen" }

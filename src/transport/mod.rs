@@ -4,7 +4,7 @@ use bytes::{Bytes, BytesMut, BufMut, Buf};
 use tokio::macros::support::Pin;
 use tokio_tower::multiplex::TagStore;
 use tokio::stream::StreamExt;
-use crate::proto::{Wired, RequestHeader, WireWrite, ApiKey, WireRead, ApiRequest};
+use crate::proto::{Wired, WireWrite, ApiKey, WireRead, ApiRequest, TagBuffer};
 use tokio::io::Error;
 use std::ops::DerefMut;
 use tower::{Service, ServiceExt};
@@ -17,9 +17,28 @@ use futures::FutureExt;
 use byteorder::{BigEndian, ByteOrder};
 use crate::proto::api_versions::Request;
 
+
+#[derive(Default, Clone, Wired)]
+pub struct RequestHeader {
+    pub(crate) api_key: ApiKey,
+    pub(crate) api_version: i16,
+    pub(crate) correlation_id: i32,
+    #[wired(since = 1)]
+    pub(crate) client_id: Option<String>,
+    // Request Header contains tag buffer in flexible versions
+    #[wired(since = 2)]
+    pub(crate) tag_buffer: Option<TagBuffer>,
+}
+
+#[derive(Debug, Clone, Wired)]
+pub struct ResponseHeader {
+    pub(crate) correlation_id: i32,
+}
+
 #[derive(Default, Clone)]
 pub struct RawRequest {
     header: RequestHeader,
+    flexible: bool,
     data: Bytes,
 }
 
@@ -37,7 +56,7 @@ impl Encoder<RawRequest> for Codec {
         dst.put_i32(0);
 
         let mut wire = WireWrite {
-            version: item.header.api_version as _,
+            version: if item.flexible { 2 } else { 1 },
             buffer: dst,
         };
         item.header.to_wire(&mut wire);
@@ -132,20 +151,27 @@ impl<Req, T> tower::Service<CallReq<Req>> for TypedClient<T>
 
     fn call(&mut self, req: CallReq<Req>) -> Self::Future {
         let mut buf = bytes::BytesMut::new();
+        let ver = req.api_ver as usize;
 
         let mut wire = WireWrite {
             version: req.api_ver as _,
             buffer: &mut buf,
         };
-
-        let encode = req.req.to_wire(&mut wire);
+        let flexible = req.api_ver as usize >= Req::FLEXIBLE_VER;
+        if flexible {
+            req.req.to_wire_compact(&mut wire);
+        } else {
+            req.req.to_wire(&mut wire);
+        }
         let raw = RawRequest {
             header: RequestHeader {
                 api_version: req.api_ver as _,
                 api_key: Req::API_KEY,
                 correlation_id: 0,
                 client_id: Some("hello".to_string()),
+                tag_buffer: TagBuffer {}.into(),
             },
+            flexible,
             data: buf.freeze(),
         };
 
@@ -153,10 +179,17 @@ impl<Req, T> tower::Service<CallReq<Req>> for TypedClient<T>
         async move {
             let mut res = fut.await.unwrap();
 
-            Ok(Req::Response::from_wire(&mut WireRead {
+            let mut read = WireRead {
                 buffer: &mut res.data,
                 version: req.api_ver as _,
-            }).unwrap())
+            };
+
+            Ok(if flexible {
+                TagBuffer::from_wire(&mut read).unwrap();
+                Req::Response::from_wire_compact(&mut read).unwrap()
+            } else {
+                Req::Response::from_wire(&mut read).unwrap()
+            })
         }.boxed()
     }
 }
@@ -191,20 +224,3 @@ impl<T> tower::Service<()> for TypedClient<T>
         futures::future::ok(())
     }
 }
-/*
-#[tokio::test]
-async fn test1() {
-    std::env::set_var("RUST_LOG", "trace");
-    let tp = tokio::net::TcpStream::connect("localhost:9092").await.unwrap();
-
-    let client = new(tp).await;
-
-    let mut cl = client.lock().await;
-    let req = new_req::<Request>(1, crate::proto::api_versions::Request {});
-
-    let rf = ServiceExt::<CallReq<Request>>::ready_and(cl.deref_mut());
-    let f1 = rf.await.unwrap().call(req);
-
-    let r1 = f1.await.unwrap();
-}
- */

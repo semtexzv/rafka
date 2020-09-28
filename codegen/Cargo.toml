@@ -3,6 +3,8 @@ name = "rafka_codegen"
 version = "0.0.0"
 authors = ["Michal Hornicky <mhornick@redhat.com>"]
 description = "Code-generation for kafka wire protocol"
+repository = "https://github.com/semtexzv/rafka"
+license = "MIT"
 keywords = ["template", "proc_macro", "procmacro"]
 edition = "2018"
 
@@ -12,5 +14,6 @@ proc-macro = true
 [dependencies]
 quote = "1"
 proc-macro2 = "1.0"
+darling = "*"
 syn = "1.0"
 
